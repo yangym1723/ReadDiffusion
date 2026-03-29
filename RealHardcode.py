@@ -60,7 +60,9 @@ class ArduinoValveController:
         port: Optional[str] = None,
         baudrate: int = 115200,
         timeout: float = 1.0,
-        startup_delay: float = 2.0,
+        startup_delay: float = 3.0,
+        ready_retries: int = 8,
+        ready_retry_interval: float = 0.5,
         initialize: bool = True,
     ):
         self._require_pyserial()
@@ -73,6 +75,7 @@ class ArduinoValveController:
             time.sleep(startup_delay)
         self._serial.reset_input_buffer()
         self._serial.reset_output_buffer()
+        self.wait_until_ready(retries=ready_retries, retry_interval=ready_retry_interval)
         if initialize:
             self.set_valves(0, 0, 0, 0)
 
@@ -207,15 +210,33 @@ class ArduinoValveController:
         response = self.read_available(settle_time=settle_time)
         return sent, response
 
-    def query_state(self, settle_time: float = 0.2) -> dict:
+    def query_state(self, settle_time: float = 0.2, raise_on_empty: bool = True) -> Optional[dict]:
         _, response = self.send_command_and_read({"cmd": 1}, settle_time=settle_time)
         messages = self._parse_json_lines(response)
         if not messages:
-            raise RuntimeError(
-                "Arduino did not respond to cmd=1. The board may not be running the expected .ino, "
-                "or the serial port may be wrong."
-            )
+            if raise_on_empty:
+                raise RuntimeError(
+                    "Arduino did not respond to cmd=1. The board may not be running the expected .ino, "
+                    "or the serial port may be wrong."
+                )
+            return None
         return messages[-1]
+
+    def wait_until_ready(self, retries: int = 8, retry_interval: float = 0.5) -> dict:
+        last_state = None
+        for attempt in range(1, retries + 1):
+            last_state = self.query_state(
+                settle_time=retry_interval,
+                raise_on_empty=False,
+            )
+            if last_state is not None:
+                print(f"Arduino handshake succeeded on attempt {attempt}/{retries}")
+                return last_state
+        raise RuntimeError(
+            "Arduino did not respond after opening the serial port. "
+            "Likely causes: the expected .ino was not flashed, the wrong serial port was selected, "
+            "or another program is still holding the port."
+        )
 
     def save_current_to_eeprom(self, settle_time: float = 0.2) -> dict:
         _, response = self.send_command_and_read({"cmd": 3}, settle_time=settle_time)
@@ -251,7 +272,15 @@ class ArduinoValveController:
             payload = self._build_command(0, 0, 0, 0)
 
         payload[channel_name] = self._normalize_value(channel_name, value)
-        self.send_command_and_read(payload)
+        _, response = self.send_command_and_read(payload)
+        messages = self._parse_json_lines(response)
+        if not messages:
+            raise RuntimeError(
+                f"Arduino did not acknowledge channel update for {channel_name}."
+            )
+        last_message = messages[-1]
+        if last_message.get("type") == "error":
+            raise RuntimeError(f"Arduino reported an error: {last_message}")
         return dict(payload)
 
     def stop_all(self) -> dict[str, int]:
@@ -413,7 +442,7 @@ if __name__ == "__main__":
     try:
         # If auto detection does not pick the right device on Ubuntu,
         # pass the port explicitly, for example ArduinoValveController(port="/dev/ttyACM0").
-        valves = ArduinoValveController(port="/dev/ttyACM0")
+        valves = ArduinoValveController(port="/dev/ttyACM0", initialize=False)
         print(f"Arduino controller opened on {valves.port}")
         print(f"Initial Arduino state: {valves.query_state()}")
         # Keep the same world/base alignment as class_robot_new_version.py.
