@@ -20,7 +20,7 @@ except ImportError:
 
 
 class ArduinoValveController:
-    HOLD_VALUE = 9999
+    HOLD_VALUE = 0
     CHANNEL_NAMES = ("d1", "d2", "d3", "d4")
 
     def __init__(
@@ -91,9 +91,9 @@ class ArduinoValveController:
         value = int(value)
         if value == cls.HOLD_VALUE:
             return value
-        if not 0 <= value <= 4095:
+        if not 0 <= value <= 5000:
             raise ValueError(
-                f"{channel_name} must be in [0, 4095], or {cls.HOLD_VALUE} to keep the previous output."
+                f"{channel_name} must be in [0, 5000], or {cls.HOLD_VALUE} to keep the previous output."
             )
         return value
 
@@ -308,22 +308,23 @@ class Robot:
 
 
 if __name__ == "__main__":
-    robot_left = None
+    robot_right = None
     valves = None
     try:
         # If auto detection does not pick the right device on Ubuntu,
         # pass the port explicitly, for example ArduinoValveController(port="/dev/ttyACM0").
-        valves = ArduinoValveController()
-        robot_left = Robot("192.168.1.101", rotation_y_deg=-45, valve_controller=valves)
+        valves = ArduinoValveController(port="/dev/ttyACM0")
+        robot_right = Robot("192.168.1.102", rotation_y_deg=-45, valve_controller=valves)
 
-        robot_left.go_home()
+        robot_right.go_home()
         # yellow:three,d1
         # black:two,d3
-        robot_left.set_valves(d1=5000, d2=0, d3=0, d4=0)
-        robot_left.move_tool_xyz(x=-0.05, y=0.0, z=0.0, acc=0.1, vel=0.1)
-        robot_left.stop_valves()
+        robot_right.set_valves(d1=0, d2=0, d3=5000, d4=0)
+        time.sleep(5.0)
+        robot_right.move_tool_xyz(x=0.05, y=0.0, z=0.0, acc=0.1, vel=0.1)
+        robot_right.stop_valves()
     finally:
-        if robot_left is not None:
-            robot_left.close()
+        if robot_right is not None:
+            robot_right.close()
         if valves is not None:
             valves.close()
