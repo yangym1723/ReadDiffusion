@@ -224,10 +224,13 @@ class Robot:
     def set_pose(self, tf_world_target, *args, **kwargs):
         tf_base_target = self._tf_world_base.inverse * tf_world_target
 
-        pose = tf_base_target.matrix
-        position = pose[:3, 3]
-        orientation_raw_rotvec = Rotation.from_matrix(pose[:3, :3]).as_rotvec()
-        pose_ur = list(position) + list(orientation_raw_rotvec)
+        pose = np.asarray(tf_base_target.matrix, dtype=float)
+        position = pose[:3, 3].reshape(3)
+        orientation_raw_rotvec = np.asarray(
+            Rotation.from_matrix(pose[:3, :3]).as_rotvec(),
+            dtype=float,
+        ).reshape(3)
+        pose_ur = position.tolist() + orientation_raw_rotvec.tolist()
         self._rtde_c.moveL(pose_ur, kwargs.get("vel", 0.1), kwargs.get("acc", 0.1))
 
     def get_pose_raw(self):
@@ -314,14 +317,15 @@ if __name__ == "__main__":
         # If auto detection does not pick the right device on Ubuntu,
         # pass the port explicitly, for example ArduinoValveController(port="/dev/ttyACM0").
         valves = ArduinoValveController(port="/dev/ttyACM0")
-        robot_right = Robot("192.168.1.102", rotation_y_deg=-45, valve_controller=valves)
+        # Keep the same world/base alignment as class_robot_new_version.py.
+        robot_right = Robot("192.168.1.102", rotation_y_deg=45, valve_controller=valves)
 
         robot_right.go_home()
         # yellow:three,d1
         # black:two,d3
         robot_right.set_valves(d1=0, d2=0, d3=5000, d4=0)
         time.sleep(5.0)
-        robot_right.move_tool_xyz(x=0.05, y=0.0, z=0.0, acc=0.1, vel=0.1)
+        robot_right.move_tool_xyz(x=0.0, y=0.0, z=0.0, acc=0.1, vel=0.1)
         robot_right.stop_valves()
     finally:
         if robot_right is not None:
