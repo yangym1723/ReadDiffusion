@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 import time
 from math import pi, radians
 from typing import Optional
@@ -17,6 +19,36 @@ try:
     import serial.tools.list_ports
 except ImportError:
     serial = None
+
+
+def wait_for_keypress(prompt: str = "Press any key to stop Arduino output...") -> str:
+    print(prompt, flush=True)
+
+    if os.name == "nt":
+        import msvcrt
+
+        key = msvcrt.getch()
+        try:
+            return key.decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+
+    if not sys.stdin.isatty():
+        input("Press Enter to stop Arduino output...")
+        return "\n"
+
+    import select
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        select.select([sys.stdin], [], [])
+        return sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
 class ArduinoValveController:
@@ -326,8 +358,17 @@ if __name__ == "__main__":
         robot_right.set_valves(d1=0, d2=0, d3=5000, d4=0)
         time.sleep(5.0)
         robot_right.move_tool_xyz(x=0.0, y=0.0, z=0.0, acc=0.1, vel=0.1)
-        robot_right.stop_valves()
+        key = wait_for_keypress(
+            "Arduino output is holding the current d1/d2/d3/d4 values. "
+            "Press any key to stop and exit..."
+        )
+        print(f"Stopping Arduino output after keypress: {key!r}")
     finally:
+        if robot_right is not None:
+            try:
+                robot_right.stop_valves()
+            except Exception:
+                pass
         if robot_right is not None:
             robot_right.close()
         if valves is not None:
