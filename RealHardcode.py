@@ -52,7 +52,7 @@ def wait_for_keypress(prompt: str = "Press any key to stop Arduino output...") -
 
 
 class ArduinoValveController:
-    HOLD_VALUE = 0
+    HOLD_VALUE = 9999
     CHANNEL_NAMES = ("d1", "d2", "d3", "d4")
 
     def __init__(
@@ -71,6 +71,8 @@ class ArduinoValveController:
         # Many Arduino boards reset when the serial port is opened.
         if startup_delay > 0:
             time.sleep(startup_delay)
+        self._serial.reset_input_buffer()
+        self._serial.reset_output_buffer()
         if initialize:
             self.set_valves(0, 0, 0, 0)
 
@@ -167,14 +169,37 @@ class ArduinoValveController:
 
     def send_command(self, payload: dict[str, int]) -> dict[str, int]:
         message = json.dumps(payload, separators=(",", ":")) + "\n"
+        print(f"[Arduino TX] {message.strip()}")
         self._serial.write(message.encode("utf-8"))
         self._serial.flush()
         self._last_command = dict(payload)
         return dict(payload)
 
+    def read_available(self, settle_time: float = 0.2) -> str:
+        if settle_time > 0:
+            time.sleep(settle_time)
+        byte_count = self._serial.in_waiting
+        if byte_count <= 0:
+            return ""
+        raw = self._serial.read(byte_count)
+        text = raw.decode("utf-8", errors="ignore").strip()
+        if text:
+            print(f"[Arduino RX] {text}")
+        return text
+
+    def send_command_and_read(self, payload: dict[str, int], settle_time: float = 0.2) -> tuple[dict[str, int], str]:
+        sent = self.send_command(payload)
+        response = self.read_available(settle_time=settle_time)
+        return sent, response
+
+    def query_state(self, settle_time: float = 0.2) -> str:
+        _, response = self.send_command_and_read({"cmd": 1}, settle_time=settle_time)
+        return response
+
     def set_valves(self, d1: int = 0, d2: int = 0, d3: int = 0, d4: int = 0) -> dict[str, int]:
         payload = self._build_command(d1, d2, d3, d4)
-        return self.send_command(payload)
+        self.send_command_and_read(payload)
+        return dict(payload)
 
     def set_channel(self, channel_name: str, value: int, keep_others: bool = True) -> dict[str, int]:
         channel_name = channel_name.lower()
@@ -187,7 +212,8 @@ class ArduinoValveController:
             payload = self._build_command(0, 0, 0, 0)
 
         payload[channel_name] = self._normalize_value(channel_name, value)
-        return self.send_command(payload)
+        self.send_command_and_read(payload)
+        return dict(payload)
 
     def stop_all(self) -> dict[str, int]:
         return self.set_valves(0, 0, 0, 0)
@@ -349,6 +375,8 @@ if __name__ == "__main__":
         # If auto detection does not pick the right device on Ubuntu,
         # pass the port explicitly, for example ArduinoValveController(port="/dev/ttyACM0").
         valves = ArduinoValveController(port="/dev/ttyACM0")
+        print(f"Arduino controller opened on {valves.port}")
+        valves.query_state()
         # Keep the same world/base alignment as class_robot_new_version.py.
         robot_right = Robot("192.168.1.102", rotation_y_deg=45, valve_controller=valves)
 
@@ -356,6 +384,7 @@ if __name__ == "__main__":
         # yellow:three,d1
         # black:two,d3
         robot_right.set_valves(d1=0, d2=0, d3=5000, d4=0)
+        valves.query_state()
         robot_right.move_tool_xyz(x=0.0, y=0.0, z=0.0, acc=0.1, vel=0.1)
         key = wait_for_keypress(
             "Arduino output is holding the current d1/d2/d3/d4 values. "
